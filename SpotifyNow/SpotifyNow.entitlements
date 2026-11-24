@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- macOS authorizes a Team ID prefix without a paid developer account
+	     and without registering the group on the Apple Developer website.
+	     The suffix must match AppGroupResolver.groupSuffix. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>$(TeamIdentifierPrefix)app.spotifynow</string>
+	</array>
+	<!-- Lets a hardened app send play, pause, and skip to Spotify. -->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+</dict>
+</plist>
