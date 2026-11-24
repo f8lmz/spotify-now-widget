@@ -5,13 +5,14 @@ import SpotifyNowShared
 
 enum SpotifyOAuth {
     static let redirectURI = "spotifynow://callback"
-    static let scopes = [
+    static let requiredScopes: Set<String> = [
         "playlist-read-private",
         "playlist-read-collaborative",
         "playlist-modify-private",
         "playlist-modify-public",
         "user-read-currently-playing",
-    ].joined(separator: " ")
+    ]
+    static let scopes = requiredScopes.sorted().joined(separator: " ")
 
     static let authorizeURL = URL(string: "https://accounts.spotify.com/authorize")!
     static let tokenURL = URL(string: "https://accounts.spotify.com/api/token")!
@@ -46,6 +47,7 @@ struct SpotifyToken: Equatable {
     var accessToken: String
     var expiresAt: Date
     var refreshToken: String?
+    var scope: String?
 }
 
 enum SpotifyWebAPI {
@@ -103,12 +105,14 @@ enum SpotifyWebAPI {
     }
 
     static func contains(uri: String, playlistID: String, token: String) async throws -> Bool {
-        var next = URL(string: "https://api.spotify.com/v1/playlists/\(playlistID)/tracks?fields=items(track(uri)),next&limit=100")!
+        // February 2026: playlist contents moved from /tracks to /items. The item
+        // itself is `item`; `track` remains only as a deprecated alias.
+        var next = URL(string: "https://api.spotify.com/v1/playlists/\(playlistID)/items?limit=50")!
         var pages = 0
-        while pages < 30 {
+        while pages < 60 {
             let data = try await send(url: next, method: "GET", token: token, body: nil)
-            let page = try JSONDecoder().decode(PlaylistTracksPage.self, from: data)
-            if page.items.contains(where: { $0.track?.uri == uri }) {
+            let page = try JSONDecoder().decode(PlaylistItemsPage.self, from: data)
+            if page.items.contains(where: { $0.savedURI == uri }) {
                 return true
             }
             pages += 1
@@ -117,13 +121,17 @@ enum SpotifyWebAPI {
             }
             next = nextURL
         }
-        throw SpotifyAPIError(message: "This playlist is too large to check for duplicates, so it was left unchanged.")
+        throw SpotifyAPIError(
+            message: "This playlist is too large to check for duplicates, so it was left unchanged.",
+            status: 0,
+            requiresReconsent: false
+        )
     }
 
     static func add(uri: String, playlistID: String, token: String) async throws {
         let body = try JSONEncoder().encode(AddTracksBody(uris: [uri]))
         _ = try await send(
-            url: URL(string: "https://api.spotify.com/v1/playlists/\(playlistID)/tracks")!,
+            url: URL(string: "https://api.spotify.com/v1/playlists/\(playlistID)/items")!,
             method: "POST",
             token: token,
             body: body
@@ -143,7 +151,8 @@ enum SpotifyWebAPI {
         return SpotifyToken(
             accessToken: payload.accessToken,
             expiresAt: Date().addingTimeInterval(TimeInterval(payload.expiresIn)),
-            refreshToken: payload.refreshToken
+            refreshToken: payload.refreshToken,
+            scope: payload.scope
         )
     }
 
@@ -162,10 +171,16 @@ enum SpotifyWebAPI {
 
     private static func validate(data: Data, response: URLResponse) throws {
         guard let http = response as? HTTPURLResponse else {
-            throw SpotifyAPIError(message: "Spotify didn’t answer.")
+            throw SpotifyAPIError(message: "Spotify didn’t answer.", status: 0, requiresReconsent: false)
         }
         guard (200...299).contains(http.statusCode) else {
-            throw SpotifyAPIError(message: errorMessage(from: data, status: http.statusCode))
+            let spotifyMessage = errorMessage(from: data, status: http.statusCode)
+            let lower = spotifyMessage.lowercased()
+            throw SpotifyAPIError(
+                message: SpotifyFailureCopy.describe(status: http.statusCode, spotifyMessage: spotifyMessage),
+                status: http.statusCode,
+                requiresReconsent: http.statusCode == 403 && (lower.contains("scope") || lower.contains("insufficient"))
+            )
         }
     }
 
@@ -182,12 +197,16 @@ enum SpotifyWebAPI {
                 return message
             }
         }
-        return "Spotify returned HTTP \(status)."
+        let raw = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !raw.isEmpty { return raw }
+        return "HTTP \(status)"
     }
 }
 
 struct SpotifyAPIError: LocalizedError {
     var message: String
+    var status: Int
+    var requiresReconsent: Bool
     var errorDescription: String? { message }
 }
 
@@ -195,11 +214,13 @@ private struct TokenPayload: Decodable {
     var accessToken: String
     var expiresIn: Int
     var refreshToken: String?
+    var scope: String?
 
     enum CodingKeys: String, CodingKey {
         case accessToken = "access_token"
         case expiresIn = "expires_in"
         case refreshToken = "refresh_token"
+        case scope
     }
 }
 
@@ -222,30 +243,81 @@ private struct PlaylistPage: Decodable {
         var name: String?
         var collaborative: Bool?
         var owner: Owner?
+        var images: [Cover]?
+        /// February 2026 rename of `tracks`.
+        var items: Count?
+        var tracks: Count?
 
         struct Owner: Decodable {
             var id: String?
+        }
+
+        struct Cover: Decodable {
+            var url: String?
+            var width: Int?
+        }
+
+        struct Count: Decodable {
+            var total: Int?
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case id, name, collaborative, owner, images, items, tracks
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decodeIfPresent(String.self, forKey: .id)
+            name = try container.decodeIfPresent(String.self, forKey: .name)
+            collaborative = try container.decodeIfPresent(Bool.self, forKey: .collaborative)
+            owner = try container.decodeIfPresent(Owner.self, forKey: .owner)
+            images = try? container.decode([Cover].self, forKey: .images)
+            // `items` replaced `tracks` in February 2026. Either may be absent or a different shape.
+            items = try? container.decode(Count.self, forKey: .items)
+            tracks = try? container.decode(Count.self, forKey: .tracks)
         }
 
         var candidate: PlaylistCandidate? {
             guard let id, !id.isEmpty, let name, !name.isEmpty, let ownerID = owner?.id, !ownerID.isEmpty else {
                 return nil
             }
-            return PlaylistCandidate(id: id, name: name, ownerID: ownerID, collaborative: collaborative ?? false)
+            let covers = (images ?? []).map { (url: $0.url ?? "", width: $0.width) }
+            return PlaylistCandidate(
+                id: id,
+                name: name,
+                ownerID: ownerID,
+                collaborative: collaborative ?? false,
+                imageURL: PlaylistCover.preferredURL(covers),
+                trackCount: items?.total ?? tracks?.total ?? 0
+            )
         }
     }
 }
 
-private struct PlaylistTracksPage: Decodable {
+private struct PlaylistItemsPage: Decodable {
     var items: [Item]
     var next: String?
 
     struct Item: Decodable {
-        var track: Track?
+        /// Current field. `track` is the deprecated alias.
+        var item: Content?
+        var track: Content?
 
-        struct Track: Decodable {
+        struct Content: Decodable {
             var uri: String?
         }
+
+        enum CodingKeys: String, CodingKey {
+            case item, track
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            item = try? container.decode(Content.self, forKey: .item)
+            track = try? container.decode(Content.self, forKey: .track)
+        }
+
+        var savedURI: String? { item?.uri ?? track?.uri }
     }
 }
 

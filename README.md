@@ -55,7 +55,9 @@ In the menu bar panel, open **Add to Playlist**. The list is every playlist you 
 
 The medium and large widgets have one **Add to Playlist** button beside the playback controls. It opens the same list. Widgets cannot show a dropdown, so the picker is a small window.
 
-Spotify development mode only lets the app owner and the users added on that app’s settings page sign in. The limit is shown in the Spotify dashboard. Playlists you only follow, and do not own or collaborate on, are not listed. Local files, ads, and podcast episodes cannot be added. If the song is already in the playlist, Spotify Now leaves it there and says so.
+Spotify development mode only lets the app owner and the users added under the app’s User Management sign in. The app owner also needs Spotify Premium, or Spotify answers 403 and the app stops working until they subscribe again. The dashboard shows the user cap. Playlists you only follow, and do not own or collaborate on, are not listed. Local files, ads, and podcast episodes cannot be added. If the song is already in the playlist, Spotify Now leaves it there and says so.
+
+If adding a song fails, the message includes Spotify’s own error text. A 403 that only says “Forbidden” usually means the account is not on that app’s User Management list, the owner’s Premium lapsed, or the playlist is one you cannot edit. A 403 that mentions scopes means you should sign in again and allow playlist changes.
 
 **The widget says Spotify Now isn’t running.** Open the app from Applications. The music note has to stay in the menu bar.
 

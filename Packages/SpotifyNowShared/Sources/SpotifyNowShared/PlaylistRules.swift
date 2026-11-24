@@ -33,16 +33,56 @@ public struct PlaylistCandidate: Equatable, Sendable, Identifiable {
     public var name: String
     public var ownerID: String
     public var collaborative: Bool
+    public var imageURL: String?
+    public var trackCount: Int
 
-    public init(id: String, name: String, ownerID: String, collaborative: Bool) {
+    public init(
+        id: String,
+        name: String,
+        ownerID: String,
+        collaborative: Bool,
+        imageURL: String? = nil,
+        trackCount: Int = 0
+    ) {
         self.id = id
         self.name = name
         self.ownerID = ownerID
         self.collaborative = collaborative
+        self.imageURL = imageURL
+        self.trackCount = trackCount
     }
 
     public func canEdit(userID: String) -> Bool {
         ownerID == userID || collaborative
+    }
+}
+
+public enum SpotifyFailureCopy {
+    /// Turns a Spotify HTTP error into a sentence a person can act on.
+    /// Development-mode apps were pointed at `/playlists/{id}/items` in February 2026;
+    /// the old `/tracks` address answers 403 with the body "Forbidden".
+    public static func describe(status: Int, spotifyMessage: String) -> String {
+        let body = spotifyMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        let said = body.isEmpty ? "no details" : body
+        guard status == 403 else {
+            return "Spotify said: \(said) (HTTP \(status))."
+        }
+        let lower = body.lowercased()
+        if lower.contains("scope") || lower.contains("insufficient") {
+            return "Spotify said: \(said) (HTTP 403). Sign in again and allow playlist changes. Public playlists need playlist-modify-public, and private ones need playlist-modify-private."
+        }
+        return "Spotify said: \(said) (HTTP 403). In development mode the app owner needs Spotify Premium, and your account must be listed under the app’s User Management. You can only change playlists you own or collaborate on."
+    }
+}
+
+public enum PlaylistCover {
+    public static func preferredURL(_ images: [(url: String, width: Int?)]) -> String? {
+        let usable = images.filter { !$0.url.isEmpty }
+        let largeEnough = usable.filter { ($0.width ?? 0) >= 64 }
+        if let best = largeEnough.min(by: { ($0.width ?? Int.max) < ($1.width ?? Int.max) }) {
+            return best.url
+        }
+        return usable.first?.url
     }
 }
 

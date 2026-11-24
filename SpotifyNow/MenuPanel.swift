@@ -205,7 +205,7 @@ struct MenuPanel: View {
     private var playlistSection: some View {
         DisclosureGroup(isExpanded: $playlistsOpen) {
             VStack(alignment: .leading, spacing: 8) {
-                PlaylistList(account: SpotifyAccount.shared) { playlist in
+                PlaylistList(account: SpotifyAccount.shared, compact: true, query: "") { playlist in
                     Task { await SpotifyAccount.shared.addCurrentTrack(to: playlist) }
                 }
                 if let status = SpotifyAccount.shared.statusMessage {

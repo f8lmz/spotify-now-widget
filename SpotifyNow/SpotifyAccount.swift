@@ -14,6 +14,8 @@ final class SpotifyAccount {
     private(set) var isLoadingPlaylists = false
     private(set) var statusMessage: String?
     private(set) var isAuthorizing = false
+    private(set) var addingPlaylistID: String?
+    private(set) var addedPlaylistIDs: Set<String> = []
 
     private var accessToken: String?
     private var accessExpiry = Date.distantPast
@@ -21,6 +23,7 @@ final class SpotifyAccount {
     private var refreshTask: Task<String, Error>?
     private var pendingVerifier: String?
     private var pendingState: String?
+    private var grantedScopes = ""
     private var playlistsFetchedAt: Date?
     private var isAdding = false
 
@@ -31,6 +34,7 @@ final class SpotifyAccount {
     func prepare() {
         clientID = KeychainStore.load(account: AccountKey.clientID) ?? ""
         refreshToken = KeychainStore.load(account: AccountKey.refreshToken)
+        grantedScopes = KeychainStore.load(account: AccountKey.scopes) ?? ""
         guard isSignedIn else { return }
         Task { await restoreSession() }
     }
@@ -103,6 +107,7 @@ final class SpotifyAccount {
             let name = displayName ?? userID ?? "Spotify"
             statusMessage = "Signed in as \(name)."
             UserNotifier.show(title: "Signed in to Spotify", body: name)
+            promptForMissingScopes()
         } catch {
             statusMessage = error.localizedDescription
             UserNotifier.show(title: "Couldn’t sign in", body: error.localizedDescription)
@@ -136,18 +141,27 @@ final class SpotifyAccount {
         case .track(let uri):
             let title = playback?.title.isEmpty == false ? playback!.title : "Track"
             isAdding = true
-            defer { isAdding = false }
+            addingPlaylistID = playlist.id
+            defer {
+                isAdding = false
+                addingPlaylistID = nil
+            }
             do {
                 let token = try await validAccessToken()
                 if try await SpotifyWebAPI.contains(uri: uri, playlistID: playlist.id, token: token) {
+                    addedPlaylistIDs.insert(playlist.id)
                     report(title: "Already in playlist", message: "\(title) is already in \(playlist.name).")
                     return
                 }
                 let fresh = try await validAccessToken()
                 try await SpotifyWebAPI.add(uri: uri, playlistID: playlist.id, token: fresh)
+                addedPlaylistIDs.insert(playlist.id)
                 report(title: "Added to \(playlist.name)", message: "Added \(title) to \(playlist.name).")
             } catch {
                 report(title: "Couldn’t add to playlist", message: error.localizedDescription)
+                if let api = error as? SpotifyAPIError, api.requiresReconsent {
+                    promptForMissingScopes(force: true)
+                }
             }
         }
     }
@@ -156,6 +170,7 @@ final class SpotifyAccount {
         do {
             _ = try await validAccessToken()
             try await loadProfileAndPlaylists(force: true)
+            promptForMissingScopes()
         } catch {
             clearSession(keepClientID: true)
             statusMessage = "Spotify sign-in expired. Sign in again."
@@ -196,7 +211,7 @@ final class SpotifyAccount {
 
     private func performRefresh() async throws -> String {
         guard let refreshToken, !clientID.isEmpty else {
-            throw SpotifyAPIError(message: "Sign in to Spotify first.")
+            throw SpotifyAPIError(message: "Sign in to Spotify first.", status: 0, requiresReconsent: false)
         }
         let token = try await SpotifyWebAPI.refresh(refreshToken: refreshToken, clientID: clientID)
         store(token)
@@ -210,6 +225,24 @@ final class SpotifyAccount {
             refreshToken = refresh
             KeychainStore.save(refresh, account: AccountKey.refreshToken)
         }
+        if let scope = token.scope, !scope.isEmpty {
+            grantedScopes = scope
+            KeychainStore.save(scope, account: AccountKey.scopes)
+        }
+    }
+
+    private func promptForMissingScopes(force: Bool = false) {
+        let granted = Set(grantedScopes.split(separator: " ").map(String.init))
+        let missing = SpotifyOAuth.requiredScopes.subtracting(granted)
+        guard force || (!granted.isEmpty && !missing.isEmpty) else { return }
+        let alert = NSAlert()
+        alert.messageText = "Spotify needs playlist permission"
+        alert.informativeText = "Sign in again so Spotify can show the permission screen. Adding songs needs playlist-modify-public and playlist-modify-private."
+        alert.addButton(withTitle: "Sign In")
+        alert.addButton(withTitle: "Not Now")
+        if alert.runModal() == .alertFirstButtonReturn {
+            signIn()
+        }
     }
 
     private func clearSession(keepClientID: Bool) {
@@ -222,7 +255,10 @@ final class SpotifyAccount {
         playlistsFetchedAt = nil
         pendingState = nil
         pendingVerifier = nil
+        grantedScopes = ""
+        addedPlaylistIDs = []
         KeychainStore.delete(account: AccountKey.refreshToken)
+        KeychainStore.delete(account: AccountKey.scopes)
         if !keepClientID {
             clientID = ""
             KeychainStore.delete(account: AccountKey.clientID)
@@ -238,4 +274,5 @@ final class SpotifyAccount {
 private enum AccountKey {
     static let clientID = "spotify.clientID"
     static let refreshToken = "spotify.refreshToken"
+    static let scopes = "spotify.scopes"
 }
