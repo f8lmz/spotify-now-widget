@@ -7,6 +7,7 @@ struct MenuPanel: View {
     @State private var launchAtLogin = false
     @State private var loginMessage: String?
     @State private var didCopy = false
+    @State private var playlistsOpen = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -21,6 +22,7 @@ struct MenuPanel: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            playlistSection
             Divider()
             settings
             widgetHint
@@ -200,8 +202,35 @@ struct MenuPanel: View {
         )
     }
 
+    private var playlistSection: some View {
+        DisclosureGroup(isExpanded: $playlistsOpen) {
+            VStack(alignment: .leading, spacing: 8) {
+                PlaylistList(account: SpotifyAccount.shared) { playlist in
+                    Task { await SpotifyAccount.shared.addCurrentTrack(to: playlist) }
+                }
+                if let status = SpotifyAccount.shared.statusMessage {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Button("Spotify Account…") { SettingsPanel.show() }
+                    .controlSize(.small)
+            }
+            .padding(.top, 6)
+        } label: {
+            Text("Add to Playlist")
+                .font(.subheadline.weight(.semibold))
+        }
+        .onChange(of: playlistsOpen) { _, isOpen in
+            guard isOpen else { return }
+            Task { await SpotifyAccount.shared.refreshPlaylistsIfNeeded(force: true) }
+        }
+    }
+
     private var settings: some View {
         VStack(alignment: .leading, spacing: 8) {
+            Button("Spotify Account…") { SettingsPanel.show() }
             Toggle("Launch at login", isOn: Binding(
                 get: { launchAtLogin },
                 set: { newValue in

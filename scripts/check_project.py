@@ -113,6 +113,11 @@ def main():
     host_info = plistlib.loads((ROOT / "SpotifyNow" / "Info.plist").read_bytes())
     if host_info.get("LSUIElement") is not True:
         fail("menu bar app would show a Dock icon")
+    schemes = []
+    for item in host_info.get("CFBundleURLTypes") or []:
+        schemes.extend(item.get("CFBundleURLSchemes") or [])
+    if "spotifynow" not in schemes:
+        fail("host app is missing the spotifynow URL scheme")
     if "Spotify" not in host_info.get("NSAppleEventsUsageDescription", ""):
         fail("missing Apple Events usage description")
     widget_info = plistlib.loads((ROOT / "SpotifyNowWidget" / "Info.plist").read_bytes())
@@ -129,8 +134,8 @@ def main():
         fail("project is not using synchronized folders")
     if "com.example.spotifynow.widget" not in project:
         fail("widget bundle id drifted from com.example.spotifynow.widget")
-    if "DEVELOPMENT_TEAM" in project or "V8ZDQ3DFGH" in project:
-        fail("project file still contains a personal team id")
+    if re.search(r"(?m)^\s*DEVELOPMENT_TEAM\s*=", project):
+        fail("DEVELOPMENT_TEAM must stay empty so each builder picks a team in Xcode")
     if "SpotifyNowWidget.appex" not in project:
         fail("embedded appex name drifted")
     bridge = (ROOT / "SpotifyNow" / "ShareBridge.swift").read_text(encoding="utf-8")

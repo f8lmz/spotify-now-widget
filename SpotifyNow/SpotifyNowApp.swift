@@ -58,6 +58,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Welcome.presentIfNeeded()
             }
             PlaybackMonitor.shared.start()
+            SpotifyAccount.shared.prepare()
+        }
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            Task { @MainActor in
+                await AppURLRouter.handle(url)
+            }
         }
     }
 }

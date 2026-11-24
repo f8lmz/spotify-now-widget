@@ -170,6 +170,17 @@ struct SpotifyNowWidgetEntryView: View {
                 prominent: renderingMode != .accented
             )
             TransportButton(intent: NextTrackIntent(), symbol: "forward.fill", label: "Next")
+            if presentation.phase == .track, let addURL = URL(string: "spotifynow://add-to-playlist") {
+                Link(destination: addURL) {
+                    Image(systemName: "text.badge.plus")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.primary)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add to Playlist")
+            }
             Spacer(minLength: 0)
         }
     }
